@@ -100,6 +100,12 @@ class Hero extends InventoryHaver {
                                 stance: {},
                                 light_level: {},
                                 environment: {},
+                        },
+                        attack_type_modifiers: {
+                                piercing: 1.6
+                        },
+                        defense_type_modifiers: {
+                                blunt: 1.2
                         }
                 };
                 this.reputation = { //effects would go up to 1000?
@@ -629,12 +635,27 @@ character.wears_armor = function () {
                 (character.equipment.cape && character.equipment.cape.getDefense() !== 0);
 }
 
+function calculate_damage_taken(raw_damage, enemy_attack_modifiers) {
+        if (raw_damage < 1) {
+                return Math.max(Math.ceil(10*raw_damage)/10, 0);
+        }   
+        const damage_after_def = raw_damage - character.stats.full.defense;
+        let hero_defense_modifiers = Object.entries(character.stats.defense_type_modifiers);
+        //if (Object.keys(enemy_attack_modifiers).length > 0) { //Enemy has attack modifiers. 
+        let total_dmg;
+        Object.entries(enemy_attack_modifiers).forEach(attack_modifier => { //key = name, val = percent
+                let defense_modifier = hero_defense_modifiers.find(entry => entry[0] == attack_modifier[0]);
+                total_dmg += attack_modifier[1] * damage_after_def * defense_modifier ? defense_modifier[1] : 1;
+        })
+        return Math.ceil(10*Math.max(total_dmg ? total_dmg : damage_after_def, raw_damage*0.05, 1))/10; 
+}
+
 /**
  * 
  * @param {*}
  * @returns [actual damage taken; Boolean if character should faint] 
  */
-character.take_damage = function ({damage_values, can_faint = true, give_skill_xp = true, defense_modifier = 0}) {
+character.take_damage = function ({damage_values, can_faint = true, give_skill_xp = true, enemy_attack_modifiers = {}}) {
         /*
         TODO:
                 - damage types: "physical", "elemental", "magic"
@@ -643,23 +664,11 @@ character.take_damage = function ({damage_values, can_faint = true, give_skill_x
                 - resistance skills
         */
         let fainted;
-
-        damage_values = damage_values.map(val => {
-                if(val < 1) {
-                        return Math.max(Math.ceil(10*val)/10, 0);
-                } else {
-                        return Math.ceil(10*Math.max(val - (character.stats.full.defense + defense_modifier), val*0.05, 1))/10;
-                }
-        });
-        const damage_taken = damage_values.reduce((a,b)=>a+b);
+        const damage_taken = damage_values
+                .map(val => calculate_damage_taken(val, enemy_attack_modifiers))
+                .reduce((total, num) => total + num);
         character.stats.full.health -= damage_taken;
-
-        if(character.stats.full.health <= 0 && can_faint) {
-                fainted = true;
-                character.stats.full.health = 0;
-        } else {
-                fainted = false;
-        }
+        (character.stats.full.health <= 0 && can_faint) ? fainted = true : fainted = false; 
 
         if(give_skill_xp) {
                 //TODO once they are added, give xp to resistance skills when taking damage

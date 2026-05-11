@@ -58,6 +58,8 @@ class Enemy {
         this.stats = stats;
         //only magic & defense can be 0 in stats, other things will cause issues
         this.stats.max_health = stats.health;
+        this.stats.attack_type_modifiers = stats.attack_type_modifiers ?? {}
+        this.stats.defense_type_modifiers = stats.defense_type_modifiers ?? {}
         this.loot_list = loot_list;
         this.tags = {};
 
@@ -70,7 +72,7 @@ class Enemy {
                 this.tags[tag] = true;
             })
         }
-
+        
         this.tags[size] = true;
 
         this.add_to_bestiary = add_to_bestiary; //generally set it false only for SOME of challenges and keep true for everything else
@@ -79,6 +81,13 @@ class Enemy {
             throw new Error(`No such enemy size option as "${size}"!`);
         } else {
             this.size = size;
+        }
+        
+        //Alters all values so mod1 + mod2 + ... + modN = 1. 
+        if (Object.keys(this.stats.attack_type_modifiers).length > 0) {
+                let total_weight = 0;
+                Object.values(this.stats.attack_type_modifiers).forEach(weight => total_weight += weight)
+                Object.entries(this.stats.attack_type_modifiers).forEach(modifier => this.stats.attack_type_modifiers[modifier[0]] = modifier[1]/total_weight);
         }
 
         this.on_hit = on_hit;
@@ -155,7 +164,7 @@ const enemy_abilites = {
         rank: 1,
         size: "small",
         tags: ["living", "beast", "wolf rat"],
-        stats: {health: 20, attack: 4, agility: 5, dexterity: 4, magic: 0, intuition: 5, attack_speed: 0.8, defense: 1},
+        stats: {health: 20, attack: 4, attack_type_modifiers: {piercing: 9, blunt: 1}, agility: 5, dexterity: 40, magic: 0, intuition: 5, attack_speed: 0.8, defense: 1, defense_type_modifiers: {piercing: 1.5}},
         loot_list: [
             {item_name: "Rat tail", chance: 0.04},
             {item_name: "Rat fang", chance: 0.04},
@@ -170,7 +179,7 @@ const enemy_abilites = {
         rank: 1,
         size: "small",
         tags: ["living", "beast", "wolf rat"],
-        stats: {health: 30, attack: 6, agility: 6, dexterity: 5, intuition: 6, magic: 0, attack_speed: 1, defense: 2},
+        stats: {health: 30, attack: 6, attack_type_modifiers: {piercing: 6, blunt: 1}, agility: 6, dexterity: 50, intuition: 6, magic: 0, attack_speed: 1, defense: 2},
         loot_list: [
             {item_name: "Rat tail", chance: 0.04},
             {item_name: "Rat fang", chance: 0.04},

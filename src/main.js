@@ -1380,42 +1380,28 @@ function set_new_combat({enemies} = {}) {
 
     let character_attack_cooldown = 1/(character.stats.full.attack_speed);
     enemy_attack_cooldowns = [...current_enemies.map(x => 1/x.stats.attack_speed)];
-
     let fastest_cooldown = [character_attack_cooldown, ...enemy_attack_cooldowns].sort((a,b) => a - b)[0];
+    let cooldown_multiplier = Math.min(1/fastest_cooldown, 1); 
 
-    //scale all attacks to be not faster than 1 per second
-    if(fastest_cooldown < 1) {
-        const cooldown_multiplier = 1/fastest_cooldown;
-        
-        character_attack_cooldown *= cooldown_multiplier;
-        for(let i = 0; i < current_enemies.length; i++) {
-            enemy_attack_cooldowns[i] *= cooldown_multiplier;
-            enemy_timer_variance_accumulator[i] = 0;
-            enemy_timer_adjustment[i] = 0;
-            enemy_timers[i] = [Date.now(), Date.now()];
-        }
-    } else {
-        for(let i = 0; i < current_enemies.length; i++) {
-            enemy_timer_variance_accumulator[i] = 0;
-            enemy_timer_adjustment[i] = 0;
-            enemy_timers[i] = [Date.now(), Date.now()];
-        }
-    }
+    character_attack_cooldown *= cooldown_multiplier; //Compiler optimizes this, will ignore *1.
     character_timer_variance_accumulator = 0;
     character_timer_adjustment = 0;
     character_timers = [Date.now(), Date.now()];
 
+    Object.entries(current_enemies).forEach((_, index) => {
+        enemy_attack_cooldowns[index] *= cooldown_multiplier; 
+        enemy_timer_variance_accumulator[index] = 0;
+        enemy_timer_adjustment[index] = 0;
+        enemy_timers[index] = [Date.now(), Date.now()];
+    });
+
     //attach loops and animations
     for(let i = 0; i < current_enemies.length; i++) {
-        if(game_options.do_enemy_onhit_animations) {
-            do_enemy_onstart_animation(i);
-        }
-        
+        if (game_options.do_enemy_onhit_animations) do_enemy_onstart_animation(i);
         do_enemy_attack_loop(i, 0, true);
     }
 
     set_character_attack_loop({base_cooldown: character_attack_cooldown});
-    
     update_displayed_enemies();
     update_displayed_health_of_enemies();
 }
@@ -1710,8 +1696,7 @@ function do_enemy_combat_action(enemy_id) {
         const hit_chance = get_hit_chance(attacker.stats.dexterity * Math.sqrt(attacker.stats.intuition ?? 1), character.stats.full.evasion_points*evasion_chance_modifier);
 
         if(hit_chance < Math.random()) { //EVADED ATTACK
-            const xp_to_add = character.wears_armor() ? attacker.xp_value : attacker.xp_value * 1.5; 
-            //50% more evasion xp if going without armor
+            const xp_to_add = character.wears_armor() ? attacker.xp_value : attacker.xp_value * 1.5;  //50% more evasion xp if going without armor
             add_xp_to_skill({skill: skills["Evasion"], xp_to_add: xp_to_add/enemy_count_xp_mod});
             log_message("%HeroName% evaded an attack", "enemy_missed");
             return; //damage fully evaded, nothing more can happen
@@ -1721,7 +1706,7 @@ function do_enemy_combat_action(enemy_id) {
     }
 
     total_hits_taken++;
-    if(enemy_crit_chance > Math.random()){
+    if(enemy_crit_chance > Math.random()) {
         damages_dealt = damages_dealt.map(val => val*enemy_crit_damage);
         critted = true;
         total_crits_taken++;
@@ -1732,12 +1717,12 @@ function do_enemy_combat_action(enemy_id) {
         add_xp_to_skill({skill: skills["Iron skin"], xp_to_add: attacker.xp_value/enemy_count_xp_mod});
     } 
     
-    let {damage_taken, fainted} = character.take_damage({damage_values: damages_dealt, defense_modifier});
+    let {damage_taken, fainted} = character.take_damage({damage_values: damages_dealt, enemy_attack_modifiers: attacker.stats.attack_type_modifiers});
 
     add_xp_to_skill({skill: skills["Fortitude"], xp_to_add: (damage_taken**0.6)/enemy_count_xp_mod});
-
+    
     const hit_count_msg = damages_dealt.length > 1?` x${damages_dealt.length}`:"";
-
+    /*
     if(critted) {
         if(partially_blocked) {
             log_message("%HeroName% partially blocked, was critically hit" + hit_count_msg + " for " + Math.ceil(10*damage_taken)/10 + " dmg", "hero_attacked_critically");
@@ -1753,10 +1738,13 @@ function do_enemy_combat_action(enemy_id) {
             log_message("%HeroName% was hit" + hit_count_msg + " for " + Math.ceil(10*damage_taken)/10 + " dmg", "hero_attacked");
         }
     }
+    */
+    log_message(`%HeroName%  ${partially_blocked ? `partially blocked,` : ``} was ${critted ? `critically`: ``} hit` + hit_count_msg + `${damages_dealt.length > 1 ? `x${damages_dealt.length}` : ``} for ${Math.ceil(10*damage_taken)/10} dmg`,
+        `hero_attacked${critted ? `_critically` : ``}`) 
 
     attacker.on_hit(character);
 
-    if(fainted) {
+    if (fainted) {
         kill_player();
         return;
     }
@@ -1764,15 +1752,34 @@ function do_enemy_combat_action(enemy_id) {
     update_displayed_health();
 }
 
-function do_character_combat_action({target, attack_power, target_count}) {
+function calculate_damage_dealt(target, attack_power, damage_modifier) {
     const hero_base_damage = attack_power;
 
+    let raw_damage = hero_base_damage * (1.2 - Math.random() * 0.4); //small randomization by up to 20%, then bonus from skill
+    if (character.equipment.weapon != null) raw_damage *= damage_modifier;
+    if (character.stats.full.crit_rate > Math.random()) {
+        raw_damage = Math.round(10 * raw_damage * character.stats.full.crit_multiplier)/10;
+        critted = true;
+    }
+    const damage_after_def = raw_damage - Math.max(0, target.stats.defense - character.stats.full.armor_penetration)
+
+    let total_dmg;
+    let enemy_defense_modifiers = Object.entries(target.stats.defense_type_modifiers)
+    Object.entries(character.stats.attack_type_modifiers).forEach(attack_modifier => { //key = name, val = percent. 
+        let defense_modifier = enemy_defense_modifiers.find(def_mod => def_mod[0] == attack_modifier[0]); 
+        total_dmg += attack_modifier[1] * damage_after_def * defense_modifier ? defense_modifier[1] : 1;
+    }) 
+    //If no attack modifiers are present, total_dmg is undefined and damage_after_def is used.
+    let damage_dealt = Math.ceil(10*Math.max(total_dmg ? total_dmg : damage_after_def, raw_damage*0.1, 1))/10;
+
+    return {damage_dealt, critted};
+}
+
+function do_character_combat_action({target, attack_power, target_count}) {
     const groupsize_xp_multiplier = current_enemies.length**0.3334;
 
     let damage_dealt;
-    
-    let critted = false;
-    
+    let critted = false; 
     let hit_chance_modifier = current_enemies.filter(enemy => enemy.is_alive).length**(-1/4); // down to ~ 60% if there's full 8 enemies
     let damage_modifier = 1;
     
@@ -1793,56 +1800,48 @@ function do_character_combat_action({target, attack_power, target_count}) {
     const hit_chance = get_hit_chance(character.stats.full.attack_points * hit_chance_modifier, target.stats.agility * Math.sqrt(target.stats.intuition ?? 1));
 
     if(hit_chance > Math.random()) {//hero's attack hits
-
         total_hits_done++;
+        (damage_dealt, critted) = calculate_damage_dealt(target, attack_power, damage_modifier)
+        character.equipment.weapon != null ? 
+            add_xp_to_skill({skill: skills[weapon_type_to_skill[character.equipment.weapon.weapon_type]], xp_to_add: target.xp_value*groupsize_xp_multiplier/target_count})
+            : add_xp_to_skill({skill: skills['Unarmed'], xp_to_add: target.xp_value*groupsize_xp_multiplier/target_count});
+        /*
         if(character.equipment.weapon != null) {
             //if has weapon
             damage_dealt = Math.round(10 * damage_modifier * hero_base_damage * (1.2 - Math.random() * 0.4))/10;
-
             add_xp_to_skill({skill: skills[weapon_type_to_skill[character.equipment.weapon.weapon_type]], xp_to_add: target.xp_value*groupsize_xp_multiplier/target_count});
-
         } else {
             //if has no weapon
             damage_dealt = Math.round(10 * hero_base_damage * (1.2 - Math.random() * 0.4) )/10;
             add_xp_to_skill({skill: skills['Unarmed'], xp_to_add: target.xp_value*groupsize_xp_multiplier/target_count});
         }
-        //small randomization by up to 20%, then bonus from skill
+        */
 
         if(game_options.do_enemy_onhit_animations) {
             const enemy_id = current_enemies.findIndex(enemy => enemy===target);
             do_enemy_onhit_animation(enemy_id);
         }
-        if(character.stats.full.crit_rate > Math.random()) {
-            damage_dealt = Math.round(10*damage_dealt * character.stats.full.crit_multiplier)/10;
-            critted = true;
+
+        if (critted) {
+        //if(character.stats.full.crit_rate > Math.random()) {
+            //damage_dealt = Math.round(10 * damage_dealt * character.stats.full.crit_multiplier)/10;
+            //critted = true;
             total_crits_done++;
             add_xp_to_skill({skill: skills['Perception'], xp_to_add: 1/target_count}); //gains unaffected by damage nor by enemy xp value
         }
-        else {
-            critted = false;
-        }
         
-        damage_dealt = Math.ceil(10*Math.max(damage_dealt - Math.max(0,target.stats.defense-character.stats.full.armor_penetration), damage_dealt*0.1, 1))/10;
-
-        target.stats.health -= damage_dealt;
-        if(damage_dealt > strongest_hit) {
-            strongest_hit = damage_dealt;
-        }
-        if(critted) {
-            log_message(target.name + " was critically hit for " + damage_dealt + " dmg", "enemy_attacked_critically");
-        }
-        else {
-            log_message(target.name + " was hit for " + damage_dealt + " dmg", "enemy_attacked");
-        }
+        //damage_dealt = Math.ceil(10*Math.max(damage_dealt - Math.max(0,target.stats.defense-character.stats.full.armor_penetration), damage_dealt*0.1, 1))/10;
+        target.stats.health = Math.max(0, target.stats.health - damage_dealt);
+        if (damage_dealt > strongest_hit) strongest_hit = damage_dealt
+        log_message(`${target.name} was ${critted ? "critically" : ""} hit for ${damage_dealt} dmg`, `enemy_attacked${critted ? "_critically" : ""}`);
 
         target.on_damaged(character);
 
-        if(target.stats.health <= 0) {
+        if (target.stats.health == 0) {
             total_kills++;
-            target.stats.health = 0; //to not go negative on displayed value
             target.on_death(character);
 
-            log_message(target.name + " was defeated", "enemy_defeated");
+            log_message(`${target.name} was defeated`, "enemy_defeated");
 
             //gained xp multiplied by TOTAL size of enemy group raised to 1/3
             let xp_reward = target.xp_value * groupsize_xp_multiplier;

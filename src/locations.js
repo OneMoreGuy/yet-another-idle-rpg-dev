@@ -263,7 +263,9 @@ class Combat_zone {
                         intuition: Math.round(enemy.stats.intuition * (base - Math.random() * vary)),
                         attack_speed: Math.round(enemy.stats.attack_speed * (base - Math.random() * vary) * 100) / 100,
                         attack_count: Math.round((enemy.stats.attack_count || 1) * (base - Math.random() * vary)),
-                        defense: Math.round(enemy.stats.defense * (base - Math.random() * vary))
+                        defense: Math.round(enemy.stats.defense * (base - Math.random() * vary)),
+                        attack_type_modifiers: enemy.stats.attack_type_modifiers ?? {}, //Static for now, but enemies must have it even if there's no variation.
+                        defense_type_modifiers: enemy.stats.defense_type_modifiers ?? {}
                     },
                 });
             } else {
